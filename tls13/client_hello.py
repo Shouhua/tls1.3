@@ -141,7 +141,12 @@ class ExtensionPreSharedKey(ClientHelloExtension):
         ])
 
 
-
+# type(2 bytes 0x0000 表示服务器名称指示) ClientHelloExtension处理
+# extension length (2 bytes) ClientHelloExtension处理
+# first entry length(2 bytes) ClientHelloExtension处理
+# 00
+# server name length (2 bytes)
+# server name
 class ExtensionServerName(ClientHelloExtension):
     def __init__(self, server_name):
         data = b"".join(
@@ -149,14 +154,17 @@ class ExtensionServerName(ClientHelloExtension):
         )
         super().__init__(EXTENSION_SERVER_NAME, data)
 
-
+# extension type(2 bytes) 0x00 0x0A
+# extension length(2 bytes)
+# group length(2 bytes)
+# group(2 bytes) 0x00 0x1D
 class ExtensionSupportedGroups(ClientHelloExtension):
     def __init__(self):
         supported_groups = [0x1D, 0x17, 0x18]  # x25519  # x25519  # x25519
         data = b"".join([struct.pack(">h", group) for group in supported_groups])
         super().__init__(EXTENSION_SUPPORTED_GROUPS, data)
 
-
+# 类似ExtensionSupportedGroups
 class ExtensionSignatureAlgorithms(ClientHelloExtension):
     def __init__(self):
         supported_signatures = [
@@ -179,7 +187,7 @@ class ExtensionKeyShare(ClientHelloExtension):
         self.public_key_bytes = public_key_bytes
         data = b"".join(
             [
-                struct.pack(">h", 0x001D),
+                struct.pack(">h", 0x001D), # 0x001D 代表 x25519 算法
                 struct.pack(">h", len(public_key_bytes)),
                 public_key_bytes,
             ]
@@ -196,6 +204,7 @@ class ExtensionKeyShare(ClientHelloExtension):
         return ExtensionKeyShare(public_key_bytes)
 
 
+# 两种：PSK_(EC)DHE, PSK_KE
 class ExtensionPSKKeyExchangeModes(ClientHelloExtension):
     def __init__(self):
         pass
@@ -206,7 +215,7 @@ class ExtensionPSKKeyExchangeModes(ClientHelloExtension):
                 struct.pack(">h", EXTENSION_PSK_KEY_EXCHANGE_MODES),
                 struct.pack(">h", 0x02),
                 struct.pack("b", 0x01),
-                struct.pack("b", 0x01),
+                struct.pack("b", 0x01), # PSK with (EC)DHE key establishment
             ]
         )
         return data
@@ -215,7 +224,7 @@ class ExtensionPSKKeyExchangeModes(ClientHelloExtension):
 class ExtensionSupportedVersions(ClientHelloExtension):
     def __init__(self):
         self.size = 4
-        self.data = 0x0304
+        self.data = 0x0304 # tls1.3
 
     def serialize(self) -> bytes:
         data = b"".join(
@@ -248,10 +257,13 @@ EXTENSIONS_MAP = {
 
 class ClientHello:
     def __init__(self, domain: bytes, public_key_bytes: bytes):
+        # 0x16 handshake record; 0301 tls1.0;
         self.record_header = RecordHeader(
             rtype=0x16, legacy_proto_version=0x0301, size=0
         )
+        # 0x01 client hello
         self.handshake_header = HandshakeHeader(message_type=0x01, size=0)
+        # 0303 tls1.2 为了兼容性
         self.client_version = 0x0303
         self.client_random = secrets.token_bytes(32)
         self.session_id = secrets.token_bytes(32)
@@ -275,9 +287,24 @@ class ClientHello:
 
     def calc_record_size(self) -> int:
         data = self._serialize()
-        self.record_header.size = len(data) - 5
+        self.record_header.size = len(data) - 5 # 获取record中payload长度
         self.handshake_header.size = self.record_header.size - 4
 
+    # record type(1 byte)
+    # record protocol type(2 bytes)
+    # record payload length(2 bytes)
+    # message type(1 byte)
+    # messgae length(3 bytes)
+    # protocol version(2 bytes)
+    # random (32 bytes)
+    # session id length(1 byte 0x20)
+    # session id(32 bytes)
+    # cipher_suites length(2 bytes)
+    # cipher_suites
+    # compression length(1 byte 0x01)
+    # compression (1 bytes 0x00)
+    # extension length (2 bytes)
+    # extension
     def _serialize(self) -> bytes:
         self.extension_data = b"".join([ex.serialize() for ex in self.extensions])
         self.extension_length = len(self.extension_data)

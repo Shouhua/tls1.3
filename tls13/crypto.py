@@ -20,6 +20,11 @@ def HKDF_Expand_Label(
     key, label, context, length, backend=default_backend(), algorithm=hashes.SHA256()
 ):
     tmp_label = b"tls13 " + label.encode()
+    # 2 bytes length
+    # 1 byte label length(tls13 ...)
+    # label
+    # 1 byte hash/context length()
+    # hash/context
     hkdf_label = (
         struct.pack(">h", length)
         + struct.pack("b", len(tmp_label))
@@ -115,6 +120,7 @@ class KeyPair:
         )
         return private_bytes
 
+    # generate shared key from local private key and peer public key
     def exchange(self, peer_pub_key_bytes: bytes) -> bytes:
         peer_pub_key = X25519PublicKey.from_public_bytes(peer_pub_key_bytes)
         shared_key = self.private_key.exchange(peer_pub_key)
@@ -169,7 +175,6 @@ class KeyPair:
             early_secret=early_secret,
             client_early_traffic_secret=client_early_traffic_secret,
         )
-
 
     def derive(self, shared_secret: bytes, hello_hash: bytes):#, resumption_keys: ResumptionKeys=None):
         backend = default_backend()

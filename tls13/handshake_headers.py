@@ -6,7 +6,7 @@ import hmac
 import hashlib
 from binascii import hexlify
 
-
+# 每一个TLS握手消息都是以1字节类型和3字节长度开始
 @dataclass
 class HandshakeHeader:
     message_type: int

@@ -216,7 +216,7 @@ class TLS13Session:
                 AES.MODE_GCM,
                 xor_iv(self.handshake_keys.server_iv, self.handshake_recv_counter),
             )
-            decryptor.update(recdata)
+            decryptor.update(recdata) # associated data
 
             plaintext = decryptor.decrypt(bytes(ciphertext))
             self.handshake_recv_counter += 1
