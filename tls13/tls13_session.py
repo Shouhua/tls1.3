@@ -46,7 +46,7 @@ class TLS13Session:
         self.handshake_recv_counter = 0
         self.application_send_counter = 0
         self.application_recv_counter = 0
-
+        self.resumption_keys = None
 
     def connect(self) -> None:
         self.socket.connect((self.host, self.port))
@@ -126,7 +126,7 @@ class TLS13Session:
             binders=psk_binders)
 
         # TODO 需要重新生成key pair，重点是在哪儿点生成，这里会干扰后面的密钥生成？
-        # self.key_pair = KeyPair.generate()
+        self.key_pair = KeyPair.generate()
         self.handshake_keys = None
         self.application_keys = None
         # self.hello_hash_bytes = bytearray()
@@ -284,7 +284,7 @@ class TLS13Session:
         shared_secret = self.key_pair.exchange(peer_pub_key)
         print("shared secret", shared_secret)
         hello_hash = hashlib.sha256(self.hello_hash_bytes).digest()
-        return self.key_pair.derive(shared_secret, hello_hash)
+        return self.key_pair.derive(shared_secret, hello_hash, self.resumption_keys)
 
     def recv_server_encrypted_extensions(self, bytes_buffer) -> bytes:
         def parse_wrapper(bytes_buffer):
