@@ -1,7 +1,10 @@
 import struct
 from dataclasses import dataclass
 
-
+# record header 5个字节
+# type 1 byte, 比如handshake protocol：22， change cipher spec protocol: 20, application data: 23
+# legacy protocol version: 0x0303(tls1.2)
+# size 2 bytes
 @dataclass
 class RecordHeader:
     rtype: int

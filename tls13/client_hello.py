@@ -5,6 +5,7 @@ from tls13.handshake_headers import HandshakeHeader, NewSessionTicketHandshakePa
 import hmac
 import hashlib
 import binascii
+from enum import IntEnum
 
 EXTENSION_SERVER_NAME = 0x00
 EXTENSION_SUPPORTED_GROUPS = 0x0A
@@ -154,13 +155,24 @@ class ExtensionServerName(ClientHelloExtension):
         )
         super().__init__(EXTENSION_SERVER_NAME, data)
 
+class Group(IntEnum):
+    # NIST P-256
+    SECP256R1 = 0x0017
+    SECP384R1 = 0x0018
+    SECP521R1 = 0x0019
+    # EdDSA使用的椭圆曲线
+    X25519 = 0x001D
+    X448 = 0x001E
+    GREASE = 0xAAAA
 # extension type(2 bytes) 0x00 0x0A
 # extension length(2 bytes)
 # group length(2 bytes)
 # group(2 bytes) 0x00 0x1D
 class ExtensionSupportedGroups(ClientHelloExtension):
     def __init__(self):
-        supported_groups = [0x1D, 0x17, 0x18]  # x25519  # x25519  # x25519
+        # TODO: 需要验证是否支持下面三种曲线
+        # 比如: default_backend().x25519_supported()
+        supported_groups = [Group.X25519, Group.SECP256R1, Group.SECP384R1]  # x25519, SECP256R1, SECP384R1
         data = b"".join([struct.pack(">h", group) for group in supported_groups])
         super().__init__(EXTENSION_SUPPORTED_GROUPS, data)
 
@@ -204,7 +216,7 @@ class ExtensionKeyShare(ClientHelloExtension):
         return ExtensionKeyShare(public_key_bytes)
 
 
-# 两种：PSK_(EC)DHE, PSK_KE
+# 两种：PSK_KE(0), PSK_(EC)DHE(1)
 class ExtensionPSKKeyExchangeModes(ClientHelloExtension):
     def __init__(self):
         pass
@@ -213,8 +225,8 @@ class ExtensionPSKKeyExchangeModes(ClientHelloExtension):
         data = b"".join(
             [
                 struct.pack(">h", EXTENSION_PSK_KEY_EXCHANGE_MODES),
-                struct.pack(">h", 0x02),
-                struct.pack("b", 0x01),
+                struct.pack(">h", 0x02), # length
+                struct.pack("b", 0x01), # psk key exchange mode length
                 struct.pack("b", 0x01), # PSK with (EC)DHE key establishment
             ]
         )
@@ -243,7 +255,17 @@ class ExtensionSupportedVersions(ClientHelloExtension):
         _data_follows, = struct.unpack(">h", data.read(2))
         _assigned_version, = struct.unpack(">h", data.read(2))
         return ExtensionSupportedVersions()
-
+    
+class ExtensionServerPreSharedKey:
+    def __init__(self, index) -> None:
+        self.index = index
+        self.size = 4
+    @classmethod
+    def deserialize(klass, data):
+        _type = struct.unpack(">h", data.read(2))
+        _len = struct.unpack(">h", data.read(2))
+        _index = struct.unpack(">h", data.read(2))
+        return ExtensionServerPreSharedKey(_index)
 
 EXTENSIONS_MAP = {
     EXTENSION_SERVER_NAME: ExtensionServerName,
@@ -252,12 +274,15 @@ EXTENSIONS_MAP = {
     EXTENSION_KEY_SHARE: ExtensionKeyShare,
     EXTENSION_PSK_KEY_EXCHANGE_MODES: ExtensionPSKKeyExchangeModes,
     EXTENSION_SUPPORTED_VERSIONS: ExtensionSupportedVersions,
+    EXTENSION_PRE_SHARED_KEY: ExtensionServerPreSharedKey
 }
 
 
 class ClientHello:
     def __init__(self, domain: bytes, public_key_bytes: bytes):
-        # 0x16 handshake record; 0301 tls1.0;
+        # 0x16(22) handshake record; 0301 tls1.0;
+        # 只有这个地方的legacy_protocol_version 为0x0301，为了兼容性
+        # https://datatracker.ietf.org/doc/html/rfc8446#autoid-59
         self.record_header = RecordHeader(
             rtype=0x16, legacy_proto_version=0x0301, size=0
         )

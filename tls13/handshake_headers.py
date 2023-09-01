@@ -5,8 +5,10 @@ from tls13.crypto import HKDF_Expand_Label
 import hmac
 import hashlib
 from binascii import hexlify
+import datetime
 
-# 每一个TLS握手消息都是以1字节类型和3字节长度开始
+# 每一个TLS握手消息4个字节，1字节类型和3字节长度开始, 类型有比如：client hello, server hello等
+# https://datatracker.ietf.org/doc/html/rfc8446#autoid-18
 @dataclass
 class HandshakeHeader:
     message_type: int
@@ -104,12 +106,14 @@ class HandshakeFinishedHandshakePayload(HandshakePayload):
     # TODO: there maybe some more checks we want to do with the verify data as well...
 
 
+utcnow = datetime.datetime.utcnow
 @dataclass
 class NewSessionTicketHandshakePayload(HandshakePayload):
     ticket_lifetime_seconds: int
     ticket_age_add: int
     ticket_nonce: int
     session_ticket: bytes
+    received_time: datetime.datetime
 
     @classmethod
     def default_htype(klass) -> int:
@@ -118,10 +122,13 @@ class NewSessionTicketHandshakePayload(HandshakePayload):
     @property
     def obfuscated_ticket_age(self):
         # see https://tools.ietf.org/html/rfc8446#section-4.2.11.1 for explanation
-        print("ticket lifetime", self.ticket_lifetime_seconds // 1000)
-        print("ticket add", self.ticket_age_add)
-        return ((self.ticket_lifetime_seconds // 1000) + self.ticket_age_add) % (2 ** 32)
+        # TODO: 这里为什么不是 self.ticket_lifetime_seconds * 1000
+        # print("ticket lifetime", self.ticket_lifetime_seconds // 1000)
+        # print("ticket add", self.ticket_age_add)
+        # return ((self.ticket_lifetime_seconds // 1000) + self.ticket_age_add) % (2 ** 32)
+        return (((utcnow() - self.received_time).seconds * 1000) + self.ticket_age_add) % ( 1 << 32 )
 
+    # https://datatracker.ietf.org/doc/html/rfc8446#autoid-55
     def psk(self, resumption_master_secret: bytes):
         tmp_psk = HKDF_Expand_Label(
             key=resumption_master_secret,
@@ -155,6 +162,7 @@ class NewSessionTicketHandshakePayload(HandshakePayload):
             ticket_age_add=ticket_age_add,
             ticket_nonce=ticket_nonce,
             session_ticket=session_ticket,
+            received_time=utcnow()
         )
 
 

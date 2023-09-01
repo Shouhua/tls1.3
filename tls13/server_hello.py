@@ -42,9 +42,12 @@ class ServerHello:
         while extensions_length > 0:
             assigned_value, = struct.unpack(">h", byte_stream.peek()[:2])
             extension_klass = EXTENSIONS_MAP[assigned_value]
-            res = extension_klass.deserialize(byte_stream)
-            extensions.append(res)
-            extensions_length -= res.size + 2
+            if extension_klass is None:
+                break
+            else:
+                res = extension_klass.deserialize(byte_stream)
+                extensions.append(res)
+                extensions_length -= res.size + 2
 
         return ServerHello(
             rh=rh,

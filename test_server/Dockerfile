@@ -12,9 +12,9 @@ RUN openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 
 COPY ./default.conf /etc/nginx/conf.d/default.conf
 
-RUN apt install -y python3.7 procps python3-pip
+RUN apt install -y python3.11 procps python3-pip
 
-RUN python3.7 -m pip install flask
+RUN python3 -m pip install flask --break-system-packages
 
 COPY ./app.py /
 COPY ./start.sh /

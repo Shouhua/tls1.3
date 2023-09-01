@@ -67,7 +67,7 @@ def test_ExtensionPreSharedKey_serialize_psk_identity():
 
     assert data == bytes.fromhex("00f0cd1a9be18f3b2c3c9363302e1baffa000ef151287c952ae771d32355b7c7199fd68df04a663e171d18a040b74c4b280f5b3ec6843ab2bf056cbcff073e5d5bb35b98bf566c240b14420d757d7cab9636d07e4c42a1b64b2ac7c07530bb95874de071c2ec4f96bb18a29167bd19863c1e1b2f7a75286da1a7f9a47575374eb0dd78b16af7e24a3ae98bfc84fc7af04abd8771a105ac62e798042a7007c16b4e81d0d50257a2d5dd72954900854588d243bfe84270ba9feb461f5ffe629a5b4d1b8e5125a0de38a3174663ae8c750f26433b79b9939ad3f4377086a666f350c8305425830cd3d75f74f72550a854581a3a2d60ce47")
 
-
+# 0x2A对应ascii是 *
 def test_ExtensionEarlyData():
     da = ExtensionEarlyData()
     assert da.serialize() == b'\x00*\x00\x00'

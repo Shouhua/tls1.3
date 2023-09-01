@@ -44,6 +44,8 @@ class ApplicationKeys:
     server_key: bytes
     server_iv: bytes
     master_secret: bytes
+    client_application_traffic_secret: bytes
+    server_application_traffic_secret: bytes
 
     def resumption_master_secret(self, some_hash: bytes) -> bytes:
         return HKDF_Expand_Label(
@@ -176,18 +178,18 @@ class KeyPair:
             client_early_traffic_secret=client_early_traffic_secret,
         )
 
-    def derive(self, shared_secret: bytes, hello_hash: bytes):#, resumption_keys: ResumptionKeys=None):
+    def derive(self, shared_secret: bytes, hello_hash: bytes, resumption_keys: ResumptionKeys=None):
         backend = default_backend()
-        # if resumption_keys:
-        #     early_secret = resumption_keys.early_secret
-        # else:
-        early_secret = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            info=b"\x00",
-            salt=b"\x00",
-            backend=backend,
-        )._extract(b"\x00" * 32)
+        if resumption_keys:
+            early_secret = resumption_keys.early_secret
+        else:
+            early_secret = HKDF(
+                algorithm=hashes.SHA256(),
+                length=32,
+                info=b"\x00",
+                salt=b"\x00",
+                backend=backend,
+            )._extract(b"\x00" * 32)
         
         empty_hash = hashlib.sha256(b"").digest()
         derived_secret = HKDF_Expand_Label(
@@ -337,7 +339,9 @@ class KeyPair:
             client_iv=client_application_iv,
             server_key=server_application_key,
             server_iv=server_application_iv,
-            master_secret=master_secret
+            master_secret=master_secret,
+            client_application_traffic_secret=client_application_traffic_secret,
+            server_application_traffic_secret=server_application_traffic_secret
         )
 
     @classmethod

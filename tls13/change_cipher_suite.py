@@ -11,7 +11,11 @@ class ChangeCipherSuite:
     @classmethod
     def deserialize(klass, byte_stream: BytesIO):
         rh = RecordHeader.deserialize(byte_stream.read(5))
+        # https://datatracker.ietf.org/doc/html/rfc8446#autoid-58 change cipher spec仅仅是为了兼容
+        assert rh.rtype == 20 # 0x14
+        assert rh.size == 1
         payload = byte_stream.read(rh.size)
+        assert payload == b"\x01"
         return klass(rh, payload)
 
     def serialize(self):

@@ -8,8 +8,8 @@ def main():
     # host = b"cloudflare.com"
     # port = 443
 
-    host = b"host.docker.internal"
-    port = 4432
+    host = b"127.0.0.1"
+    port = 4433
 
     sess = TLS13Session(host, port)
     sess.connect()
