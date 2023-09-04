@@ -194,7 +194,8 @@ class TLS13Session:
         self.socket = socket()
         self.socket.connect((self.host, self.port))
 
-        data = f"HEAD /img.jpg HTTP/1.1\r\nHost: {self.host.decode()}\r\nUser-Agent: curl/7.54.0\r\nAccept: */*\r\n\r\n".encode()
+        # data = f"HEAD /img.jpg HTTP/1.1\r\nHost: {self.host.decode()}\r\nUser-Agent: curl/7.54.0\r\nAccept: */*\r\n\r\n".encode()
+        data = f"GET / HTTP/1.1\r\nHost: {self.host.decode()}\r\nUser-Agent: curl/7.54.0\r\nAccept: */*\r\n\r\n".encode()
         send_data = data + b"\x17"
         record_header = RecordHeader(rtype=0x17, size=len(send_data) + 16)
         print("client_early_traffic_secret", hexlify(self.resumption_keys.client_early_traffic_secret))
@@ -236,6 +237,7 @@ class TLS13Session:
         self.hello_hash_bytes += plaintext
 
         # 发送 end of early data和client finished
+        # early data 05000000 and application data type 0x16
         send_data = bytes.fromhex("0500000016")
         record_header = RecordHeader(rtype=0x17, size=len(send_data) + 16)
         encryptor = AES.new(
@@ -248,10 +250,11 @@ class TLS13Session:
         tag = encryptor.digest()
 
         w = Wrapper(record_header=record_header, payload=ciphertext_payload + tag)
-        self.hello_hash_bytes += send_data
-        self.socket.send(w.serialize())
-        # TODO 一起发送end of early data and client finished
-        self.send_handshake_finished(self.handshake_keys, self.hello_hash_bytes)
+        # hash添加end of early data
+        # self.hello_hash_bytes += send_data
+
+        finished_data = self.send_handshake_finished(self.handshake_keys, self.hello_hash_bytes, True)
+        self.socket.send(w.serialize() + finished_data)
 
         # Calculate Application Keys
         handshake_hash = hashlib.sha256(self.hello_hash_bytes).digest()
@@ -259,13 +262,36 @@ class TLS13Session:
             self.handshake_keys.handshake_secret, handshake_hash
         )
         with open("keylogfile", "a") as f:
-            # f.write(f"CLIENT_HANDSHAKE_TRAFFIC_SECRET {bytes.hex(self.client_random)} {bytes.hex(self.handshake_keys.client_handshake_traffic_secret)}\n")
-            # f.write(f"SERVER_HANDSHAKE_TRAFFIC_SECRET {bytes.hex(self.client_random)} {bytes.hex(self.handshake_keys.server_handshake_traffic_secret)}\n")
             f.write(f"CLIENT_TRAFFIC_SECRET_0 {bytes.hex(self.client_random)} {bytes.hex(self.application_keys.client_application_traffic_secret)}\n")
             f.write(f"SERVER_TRAFFIC_SECRET_0 {bytes.hex(self.client_random)} {bytes.hex(self.application_keys.server_application_traffic_secret)}\n")
 
-        # 接受server application data
-        print("res", self.socket.recv(4096))
+        # 接收server application data, 也有可能alter数据
+        while raw_data := self.socket.recv(4096):
+            # print(f"received {len(raw_data)} bytes data: {raw_data.hex()}")
+            while len(raw_data) > 5:
+                if raw_data[0] == 0x17: # application data
+                    assert raw_data[1:3] == b"\x03\x03" # check version tls1.2 
+                    record_len = int.from_bytes(raw_data[3:5], byteorder="big")
+                    application_data = raw_data[5:record_len+5]
+                    print(f"application raw data: {application_data.hex()}")
+                    # 解密
+                    decryptor = AES.new(
+                        self.application_keys.server_key,
+                        AES.MODE_GCM,
+                        xor_iv(self.application_keys.server_iv, self.application_recv_counter),
+                    )
+                    self.application_recv_counter += 1
+                    # NOTICE: handshake加解密的associated data是相对应的record header data
+                    decryptor.update(raw_data[0:5]) # associated data
+
+                    plaintext = decryptor.decrypt(application_data[0: -16])
+                    if plaintext[-1] == 0x17: # 如果是真正的application data，打印decode后的asscii
+                        print(f"decryptor application data: {plaintext[0: -1].decode()}")
+                    else:
+                        print(f"decryptor raw data: {plaintext[0: -1].hex()}")
+                    raw_data = raw_data[record_len+5:]
+                else:
+                    break;
 
     def send_client_hello(self):
         ch = ClientHello(self.host, self.key_pair.public)
@@ -352,7 +378,7 @@ class TLS13Session:
         return plaintext
 
     def send_handshake_finished(
-        self, handshake_keys: HandshakeKeys, handshake_hash: bytes
+        self, handshake_keys: HandshakeKeys, handshake_hash: bytes, not_send = False
     ):
         hh_payload = HandshakeFinishedHandshakePayload.generate(
             handshake_keys.client_handshake_traffic_secret, handshake_hash
@@ -376,7 +402,8 @@ class TLS13Session:
         )
 
         # NOTICE: 添加的hash包括header+payload+0x16
-        self.hello_hash_bytes += plaintext_payload[:-1]
+        if not_send is False:
+            self.hello_hash_bytes += plaintext_payload[:-1]
 
         # type都为0x17(23), 表示application data type
         record_header = RecordHeader(rtype=0x17, size=len(plaintext_payload) + 16)
@@ -396,7 +423,10 @@ class TLS13Session:
 
         # recorder header + handshake header + handshake payload + 0x16 + tag(16 bytes)
         w = Wrapper(record_header=record_header, payload=ciphertext_payload + tag)
-        self.socket.send(w.serialize())
+        if not_send is True:
+            return w.serialize()
+        else:
+            self.socket.send(w.serialize())
 
     def send(self, data: bytes):
         send_data = data + b"\x17" # 要发送的payload, 0x17表示真正的content type(application data)
