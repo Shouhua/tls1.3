@@ -207,7 +207,7 @@ class KeyPair:
             backend=backend,
             length=32,
         )._extract(shared_secret)
-        print("handshake_secret", handshake_secret)
+        # print("handshake_secret", handshake_secret)
         client_handshake_traffic_secret = HKDF_Expand_Label(
             context=hello_hash,
             length=32,

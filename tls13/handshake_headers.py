@@ -6,6 +6,20 @@ import hmac
 import hashlib
 from binascii import hexlify
 import datetime
+from enum import IntEnum
+
+class HandshakeType(IntEnum):
+    client_hello = 1
+    server_hello = 2
+    new_session_ticket = 4
+    end_of_early_data = 5
+    encrypted_extensions = 8
+    certificate = 11
+    certificate_request = 13
+    certificate_verify = 15
+    finished = 20
+    key_update = 24
+    message_hash = 254
 
 # 每一个TLS握手消息4个字节，1字节类型和3字节长度开始, 类型有比如：client hello, server hello等
 # https://datatracker.ietf.org/doc/html/rfc8446#autoid-18
@@ -43,35 +57,36 @@ class HandshakePayload:
 class EncryptedExtensionHandshakePayload(HandshakePayload):
     @classmethod
     def default_htype(klass) -> int:
-        return 0x08
+        return HandshakeType.encrypted_extensions
 
-
+# 服务器会发送一个或多个证书：
+# 该主机的证书，包含主机名、公钥和第三方的签名(签名证明该证书主机名的所有者持有该证书的私钥)。
+# 其他证书的可选列表，从主机证书一直到预先安装在客户端上的可信证书。其中每一个都对前一个证书进行签名，形成一个信任链。
 @dataclass
 class CertificateHandshakePayload(HandshakePayload):
     certificate: bytes
 
     @classmethod
     def default_htype(klass) -> int:
-        return 0x0B
+        return HandshakeType.certificate
 
     @classmethod
     def deserialize(klass, data: bytes):
         bytes_buffer = BytesIO(data)
-        _request_context, = struct.unpack("b", bytes_buffer.read(1))
-        _certificate_length, = struct.unpack(">i", b"\x00" + bytes_buffer.read(3))
-        certificate_length_follows, = struct.unpack(
+        _request_context, = struct.unpack("b", bytes_buffer.read(1)) # 1字节的请求上下文，来源于CertificateRequest
+        _certificate_length, = struct.unpack(">i", b"\x00" + bytes_buffer.read(3)) # 3字节的所有证书长度
+        certificate_length_follows, = struct.unpack( # 接下来的证书长度，这里只解析一个证书
             ">i", b"\x00" + bytes_buffer.read(3)
         )
         certificate = bytes_buffer.read(certificate_length_follows)
-        _certificate_extensions_follow, = struct.unpack(">h", bytes_buffer.read(2))
+        _certificate_extensions_follow, = struct.unpack(">h", bytes_buffer.read(2)) # 这里不处理证书的扩展
         return CertificateHandshakePayload(data=data, certificate=certificate)
-
 
 @dataclass
 class CertificateVerifyHandshakePayload(HandshakePayload):
     @classmethod
     def default_htype(klass) -> int:
-        return 0x0F
+        return HandshakeType.certificate_verify
 
     @property
     def signature(self) -> bytes:
@@ -79,12 +94,11 @@ class CertificateVerifyHandshakePayload(HandshakePayload):
 
     # TODO: we need to varify the signature
 
-
 @dataclass
 class HandshakeFinishedHandshakePayload(HandshakePayload):
     @classmethod
     def default_htype(klass) -> int:
-        return 0x14
+        return HandshakeType.finished
 
     @property
     def verify_data(self) -> bytes:
@@ -117,7 +131,7 @@ class NewSessionTicketHandshakePayload(HandshakePayload):
 
     @classmethod
     def default_htype(klass) -> int:
-        return 0x04
+        return HandshakeType.new_session_ticket
 
     @property
     def obfuscated_ticket_age(self):

@@ -1,3 +1,11 @@
+# 新增内容
+研究TLS1.3主要是为了学习quic协议，quic协议中取消了record layer等，如果可以，会自己再实现一遍
+1. 续写O-RTT，发送early data，server验证成功，并且返回请求内容，主要代码在resume函数中，中间比较绕的是各种密钥的计算，另外要注意各种hash值的计算
+2. 为了在wireshark中调试，输出keylogfile文件，输出代码见TLS13SESSION
+3. 调试主要使用作者的步骤，server使用docker，使用openssl s_client来查看标准的流程；本地代码调试运行使用```python3 main.py```，或者使用vscode调试python代码
+4. 有个疑问，为什么有时候server在不等待end of early data就直接发送application data了？
+
+# 以下为作者的README
 # TLS 1.3
 The goal of this project is to better understand TLS 1.3 by creating a pure python implementation. Let's see how this goes!
 

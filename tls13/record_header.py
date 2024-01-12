@@ -1,5 +1,17 @@
 import struct
 from dataclasses import dataclass
+from enum import IntEnum
+
+class ContentType(IntEnum):
+    invalid = 0
+    change_cipher_spec = 20
+    alert = 21
+    handshake = 22
+    application_data = 23
+
+TLS_VERSION_1_0 = 0x0301
+TLS_VERSION_1_2 = 0x0303
+TLS_VERSION_1_3 = 0x0304
 
 # record header 5个字节
 # type 1 byte, 比如handshake protocol：22， change cipher spec protocol: 20, application data: 23

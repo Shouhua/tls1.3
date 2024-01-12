@@ -1,7 +1,7 @@
 import struct
 import secrets
-from tls13.record_header import RecordHeader
-from tls13.handshake_headers import HandshakeHeader, NewSessionTicketHandshakePayload
+from tls13.record_header import RecordHeader, ContentType, TLS_VERSION_1_0, TLS_VERSION_1_2
+from tls13.handshake_headers import HandshakeHeader, NewSessionTicketHandshakePayload, HandshakeType
 import hmac
 import hashlib
 import binascii
@@ -284,12 +284,14 @@ class ClientHello:
         # 只有这个地方的legacy_protocol_version 为0x0301，为了兼容性
         # https://datatracker.ietf.org/doc/html/rfc8446#autoid-59
         self.record_header = RecordHeader(
-            rtype=0x16, legacy_proto_version=0x0301, size=0
+            rtype=ContentType.handshake, 
+            legacy_proto_version=TLS_VERSION_1_0, 
+            size=0
         )
         # 0x01 client hello
-        self.handshake_header = HandshakeHeader(message_type=0x01, size=0)
+        self.handshake_header = HandshakeHeader(message_type=HandshakeType.client_hello, size=0)
         # 0303 tls1.2 为了兼容性
-        self.client_version = 0x0303
+        self.client_version = TLS_VERSION_1_2
         self.client_random = secrets.token_bytes(32)
         self.session_id = secrets.token_bytes(32)
         # hard coded for now...
