@@ -12,7 +12,7 @@ from tls13.handshake_headers import (
 from tls13.change_cipher_suite import ChangeCipherSuite
 from tls13.wrapper import Wrapper
 import hashlib
-from tls13.crypto import KeyPair, xor_iv, HandshakeKeys
+from tls13.crypto import KeyPair, xor_iv, HandshakeKeys, calc_verify_data
 from binascii import hexlify
 from io import BytesIO, BufferedReader
 from tls13.crypto import HKDF_Expand_Label
@@ -300,14 +300,7 @@ class TLS13Session:
         # early data 05000000 and application data type 0x16
         send_data = bytes.fromhex("0500000016")
         record_header = RecordHeader(rtype=0x17, size=len(send_data) + 16)
-        # encryptor = AES.new(
-        #     self.resumption_keys.client_early_key,
-        #     AES.MODE_GCM,
-        #     xor_iv(self.resumption_keys.client_early_iv, 1),
-        # )
-        # encryptor.update(record_header.serialize())
-        # ciphertext_payload = encryptor.encrypt(send_data) + encryptor.finalize()
-        # tag = encryptor.tag
+
         ciphertext_payload, tag = self.encrypt(
             self.resumption_keys.client_early_key,
             xor_iv(self.resumption_keys.client_early_iv, 1),
@@ -317,11 +310,11 @@ class TLS13Session:
 
         w = Wrapper(record_header=record_header, payload=ciphertext_payload + tag)
 
-        finished_data = self.send_handshake_finished(self.handshake_keys, self.hello_hash_bytes, True)
+        handshake_hash = hashlib.sha256(self.hello_hash_bytes).digest()
+        finished_data = self.send_handshake_finished(self.handshake_keys, handshake_hash, True)
         self.socket.send(w.serialize() + finished_data)
 
         # Calculate Application Keys
-        handshake_hash = hashlib.sha256(self.hello_hash_bytes).digest()
         self.application_keys = self.key_pair.derive_application_keys(
             self.handshake_keys.handshake_secret, handshake_hash
         )
@@ -529,23 +522,21 @@ class TLS13Session:
         self.certificate_verify = plaintext
 
     def parse_finished(self, plaintext):
-        # finished_key = HKDF_Expand_Label(
-        #     key=self.handshake_keys.server_handshake_traffic_secret,
-        #     label="finished",
-        #     context=b"",
-        #     length=32,
-        # )
-        # verify_data = hmac.new(
-        #     key = finished_key, 
-        #     msg = self.hello_hash_bytes, 
-        #     digestmod = hashlib.sha256
-        # ).digest()
-        verify_data = HandshakeFinishedHandshakePayload.generate(
-            self.handshake_keys.server_handshake_traffic_secret,
-            self.hello_hash_bytes
-        ).data
+        finished_key = HKDF_Expand_Label(
+            key=self.handshake_keys.server_handshake_traffic_secret,
+            label="finished",
+            context=b"",
+            length=32,
+        )
+        # NOTICE 这里的msg是经过hash后的
+        verify_data = hmac.new(
+            key = finished_key, 
+            msg = hashlib.sha256(self.hello_hash_bytes).digest(), 
+            digestmod = hashlib.sha256
+        ).digest()
 
         print(hexlify(self.handshake_keys.server_handshake_traffic_secret))
+        print(hexlify(calc_verify_data(self.handshake_keys.server_handshake_traffic_secret, self.hello_hash_bytes)))
         print(hexlify(verify_data))
         print(hexlify(plaintext[4:]))
         

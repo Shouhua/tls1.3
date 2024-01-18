@@ -3,7 +3,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PublicKey,
 )
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives import serialization, hashes, hmac
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF, HKDFExpand
 from dataclasses import dataclass
 import hashlib
@@ -15,6 +15,13 @@ def xor_iv(iv, num):
     formatted_num = (b"\x00" * 4) + struct.pack(">q", num)
     return bytes([i ^ j for i, j in zip(iv, formatted_num)])
 
+def calc_verify_data(secret, msg):
+    finished_key = HKDF_Expand_Label(secret, "finished", b"", 32)
+    h = hmac.HMAC(finished_key, algorithm=hashes.SHA256())
+    hash = hashes.Hash(hashes.SHA256())
+    hash.update(msg)
+    h.update(hash.finalize())
+    return h.finalize()
 
 def HKDF_Expand_Label(
     key, label, context, length, backend=default_backend(), algorithm=hashes.SHA256()
@@ -26,10 +33,9 @@ def HKDF_Expand_Label(
     # 1 byte hash/context length()
     # hash/context
     hkdf_label = (
-        struct.pack(">h", length)
-        + struct.pack("b", len(tmp_label))
+        struct.pack("!HB", length, len(tmp_label))
         + tmp_label
-        + struct.pack("b", len(context))
+        + struct.pack("!B", len(context))
         + context
     )
     return HKDFExpand(

@@ -1,4 +1,4 @@
-FROM nginx:latest
+FROM nginx:bookworm
 
 # RUN apt update
 # RUN apt install -y openssl
