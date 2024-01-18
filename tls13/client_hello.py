@@ -1,10 +1,7 @@
 import struct
 import secrets
 from tls13.record_header import RecordHeader, ContentType, TLS_VERSION_1_0, TLS_VERSION_1_2
-from tls13.handshake_headers import HandshakeHeader, NewSessionTicketHandshakePayload, HandshakeType
-import hmac
-import hashlib
-import binascii
+from tls13.handshake_headers import HandshakeHeader, HandshakeType
 from enum import IntEnum
 
 EXTENSION_SERVER_NAME = 0x00
@@ -16,6 +13,17 @@ EXTENSION_SUPPORTED_VERSIONS = 0x2B
 EXTENSION_EARLY_DATA = 0x2A
 EXTENSION_PRE_SHARED_KEY = 0x29
 
+supported_signatures = [
+    0x0403,  # ECDSA-SECP256r1-SHA256
+    0x0804,  # RSA-PSS-RSAE-SHA256
+    0x0401,  # RSA-PKCS1-SHA256
+    0x0503,  # ECDSA-SECP384r1-SHA384
+    0x0805,  # RSA-PSS-RSAE-SHA384
+    0x0501,  # RSA-PKCS1-SHA386
+    0x0806,  # RSA-PSS-RSAE-SHA512
+    0x0601,  # RSA-PKCS1-SHA512
+    0x0201,  # RSA-PKCS1-SHA1
+]
 
 class ClientHelloExtension:
     def __init__(self, assigned_value, data):
@@ -172,24 +180,14 @@ class ExtensionSupportedGroups(ClientHelloExtension):
     def __init__(self):
         # TODO: 需要验证是否支持下面三种曲线
         # 比如: default_backend().x25519_supported()
-        supported_groups = [Group.X25519, Group.SECP256R1, Group.SECP384R1]  # x25519, SECP256R1, SECP384R1
+        # 目前keypair生成的public key就这一种，所以就支持x25519
+        supported_groups = [Group.X25519]  # x25519, SECP256R1, SECP384R1
         data = b"".join([struct.pack(">h", group) for group in supported_groups])
         super().__init__(EXTENSION_SUPPORTED_GROUPS, data)
 
 # 类似ExtensionSupportedGroups
 class ExtensionSignatureAlgorithms(ClientHelloExtension):
     def __init__(self):
-        supported_signatures = [
-            0x0403,  # ECDSA-SECP256r1-SHA256
-            0x0804,  # RSA-PSS-RSAE-SHA256
-            0x0401,  # RSA-PKCS1-SHA256
-            0x0503,  # ECDSA-SECP384r1-SHA384
-            0x0805,  # RSA-PSS-RSAE-SHA384
-            0x0501,  # RSA-PKCS1-SHA386
-            0x0806,  # RSA-PSS-RSAE-SHA512
-            0x0601,  # RSA-PKCS1-SHA512
-            0x0201,  # RSA-PKCS1-SHA1
-        ]
         data = b"".join([struct.pack(">h", group) for group in supported_signatures])
         super().__init__(EXTENSION_SIGNATURE_ALGORITHMS, data)
 
@@ -298,7 +296,7 @@ class ClientHello:
         # 13 01 - assigned value for TLS_AES_128_GCM_SHA256
         # 13 02 - assigned value for TLS_AES_256_GCM_SHA384
         # 13 03 - assigned value for TLS_CHACHA20_POLY1305_SHA256
-        self.cipher_suites = bytes.fromhex("130113021303")
+        self.cipher_suites = bytes.fromhex("1301")
 
         self.extensions = [
             ExtensionServerName(domain),

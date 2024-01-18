@@ -146,8 +146,8 @@ class KeyPair:
             context=empty_hash,
             backend=backend,
         )
-        print("binder_key", hexlify(binder_key))
-        print("early_secret", hexlify(early_secret))
+        # print("binder_key", hexlify(binder_key))
+        # print("early_secret", hexlify(early_secret))
         client_early_traffic_secret = HKDF_Expand_Label(
             key=early_secret,
             algorithm=hashes.SHA256(),
@@ -178,6 +178,7 @@ class KeyPair:
             client_early_traffic_secret=client_early_traffic_secret,
         )
 
+    # 此时的hello_hash包括client_hello, server_hello
     def derive(self, shared_secret: bytes, hello_hash: bytes, resumption_keys: ResumptionKeys=None):
         backend = default_backend()
         if resumption_keys:

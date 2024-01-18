@@ -89,10 +89,13 @@ class CertificateVerifyHandshakePayload(HandshakePayload):
         return HandshakeType.certificate_verify
 
     @property
+    def signature_algorithm(self) -> int:
+        return int.from_bytes(self.data[0:2], 'big')
+    
+    @property
     def signature(self) -> bytes:
-        return self.data
-
-    # TODO: we need to varify the signature
+        signature_len = int.from_bytes(self.data[2:4], 'big')
+        return self.data[4:signature_len+4]
 
 @dataclass
 class HandshakeFinishedHandshakePayload(HandshakePayload):
@@ -116,9 +119,6 @@ class HandshakeFinishedHandshakePayload(HandshakePayload):
             finished_key, msg=hello_hash, digestmod=hashlib.sha256
         ).digest()
         return HandshakeFinishedHandshakePayload(data=verify_data)
-
-    # TODO: there maybe some more checks we want to do with the verify data as well...
-
 
 utcnow = datetime.datetime.utcnow
 @dataclass
@@ -150,7 +150,7 @@ class NewSessionTicketHandshakePayload(HandshakePayload):
             context=self.ticket_nonce, 
             length=32
         )
-        print("psk", hexlify(tmp_psk))
+        # print("psk", hexlify(tmp_psk))
         return tmp_psk
 
     @classmethod
