@@ -1,8 +1,14 @@
-import struct
 import secrets
-from tls13.record_header import RecordHeader, ContentType, TLS_VERSION_1_0, TLS_VERSION_1_2
-from tls13.handshake_headers import HandshakeHeader, HandshakeType
+import struct
 from enum import IntEnum
+
+from tls13.handshake_headers import HandshakeHeader, HandshakeType
+from tls13.record_header import (
+    TLS_VERSION_1_0,
+    TLS_VERSION_1_2,
+    ContentType,
+    RecordHeader,
+)
 
 EXTENSION_SERVER_NAME = 0x00
 EXTENSION_SUPPORTED_GROUPS = 0x0A
@@ -24,6 +30,7 @@ supported_signatures = [
     0x0601,  # RSA-PKCS1-SHA512
     0x0201,  # RSA-PKCS1-SHA1
 ]
+
 
 class ClientHelloExtension:
     def __init__(self, assigned_value, data):
@@ -68,7 +75,7 @@ class ExtensionPreSharedKey(ClientHelloExtension):
     #         finished_key, msg=client_hello_hash, digestmod=hashlib.sha256
     #     ).digest()
     #     psk_binders = verify_data
-        
+
     #     psk_identity = b"".join(
     #         [
     #             struct.pack(">h", len(session_ticket)),
@@ -92,7 +99,7 @@ class ExtensionPreSharedKey(ClientHelloExtension):
     #         [
     #             struct.pack(">h", len(psk_identity)),
     #             psk_identity,
-    #             self.psk_binders_serialized   
+    #             self.psk_binders_serialized
     #         ]
     #     )
 
@@ -102,7 +109,7 @@ class ExtensionPreSharedKey(ClientHelloExtension):
         data = ExtensionPreSharedKey.serialize_pre_shared_key_extension(
             identity=identity,
             obfuscated_ticket_age=obfuscated_ticket_age,
-            binders=binders
+            binders=binders,
         )
 
         super().__init__(EXTENSION_PRE_SHARED_KEY, data)
@@ -117,37 +124,40 @@ class ExtensionPreSharedKey(ClientHelloExtension):
         )
 
     @classmethod
-    def serialize_psk_identity(klass, identity: bytes, obfuscated_ticket_age: int) -> bytes:
-        return b"".join([
-            struct.pack(">h", len(identity)),
-            identity,
-            struct.pack(">I", obfuscated_ticket_age)
-        ])
+    def serialize_psk_identity(
+        klass, identity: bytes, obfuscated_ticket_age: int
+    ) -> bytes:
+        return b"".join(
+            [
+                struct.pack(">h", len(identity)),
+                identity,
+                struct.pack(">I", obfuscated_ticket_age),
+            ]
+        )
 
     @classmethod
     def serialize_binders(klass, binders: bytes) -> bytes:
-        binders_serialized = b"".join([
-            struct.pack("b", len(binders)),
-            binders
-        ])
+        binders_serialized = b"".join([struct.pack("b", len(binders)), binders])
 
-        return b"".join([
-            struct.pack(">h", len(binders_serialized)),
-            binders_serialized
-        ])    
-
-    @classmethod
-    def serialize_pre_shared_key_extension(klass, identity: bytes, obfuscated_ticket_age:int, binders: bytes) -> bytes:
-        identity = klass.serialize_psk_identity(
-            identity=identity,
-            obfuscated_ticket_age=obfuscated_ticket_age
+        return b"".join(
+            [struct.pack(">h", len(binders_serialized)), binders_serialized]
         )
 
-        return b"".join([
-            struct.pack(">h", len(identity)),
-            identity,
-            klass.serialize_binders(binders)
-        ])
+    @classmethod
+    def serialize_pre_shared_key_extension(
+        klass, identity: bytes, obfuscated_ticket_age: int, binders: bytes
+    ) -> bytes:
+        identity = klass.serialize_psk_identity(
+            identity=identity, obfuscated_ticket_age=obfuscated_ticket_age
+        )
+
+        return b"".join(
+            [
+                struct.pack(">h", len(identity)),
+                identity,
+                klass.serialize_binders(binders),
+            ]
+        )
 
 
 # type(2 bytes 0x0000 表示服务器名称指示) ClientHelloExtension处理
@@ -163,6 +173,7 @@ class ExtensionServerName(ClientHelloExtension):
         )
         super().__init__(EXTENSION_SERVER_NAME, data)
 
+
 class Group(IntEnum):
     # NIST P-256
     SECP256R1 = 0x0017
@@ -172,6 +183,8 @@ class Group(IntEnum):
     X25519 = 0x001D
     X448 = 0x001E
     GREASE = 0xAAAA
+
+
 # extension type(2 bytes) 0x00 0x0A
 # extension length(2 bytes)
 # group length(2 bytes)
@@ -185,6 +198,7 @@ class ExtensionSupportedGroups(ClientHelloExtension):
         data = b"".join([struct.pack(">h", group) for group in supported_groups])
         super().__init__(EXTENSION_SUPPORTED_GROUPS, data)
 
+
 # 类似ExtensionSupportedGroups
 class ExtensionSignatureAlgorithms(ClientHelloExtension):
     def __init__(self):
@@ -197,7 +211,7 @@ class ExtensionKeyShare(ClientHelloExtension):
         self.public_key_bytes = public_key_bytes
         data = b"".join(
             [
-                struct.pack(">h", 0x001D), # 0x001D 代表 x25519 算法
+                struct.pack(">h", 0x001D),  # 0x001D 代表 x25519 算法
                 struct.pack(">h", len(public_key_bytes)),
                 public_key_bytes,
             ]
@@ -206,10 +220,10 @@ class ExtensionKeyShare(ClientHelloExtension):
 
     @classmethod
     def deserialize(klass, data):
-        _assigned_value, = struct.unpack(">h", data.read(2))
-        _data_follows, = struct.unpack(">h", data.read(2))
-        _x25519_assigned_value, = struct.unpack(">h", data.read(2))
-        public_key_length, = struct.unpack(">h", data.read(2))
+        (_assigned_value,) = struct.unpack(">h", data.read(2))
+        (_data_follows,) = struct.unpack(">h", data.read(2))
+        (_x25519_assigned_value,) = struct.unpack(">h", data.read(2))
+        (public_key_length,) = struct.unpack(">h", data.read(2))
         public_key_bytes = data.read(public_key_length)
         return ExtensionKeyShare(public_key_bytes)
 
@@ -223,9 +237,9 @@ class ExtensionPSKKeyExchangeModes(ClientHelloExtension):
         data = b"".join(
             [
                 struct.pack(">h", EXTENSION_PSK_KEY_EXCHANGE_MODES),
-                struct.pack(">h", 0x02), # length
-                struct.pack("b", 0x01), # psk key exchange mode length
-                struct.pack("b", 0x01), # PSK with (EC)DHE key establishment
+                struct.pack(">h", 0x02),  # length
+                struct.pack("b", 0x01),  # psk key exchange mode length
+                struct.pack("b", 0x01),  # PSK with (EC)DHE key establishment
             ]
         )
         return data
@@ -234,7 +248,7 @@ class ExtensionPSKKeyExchangeModes(ClientHelloExtension):
 class ExtensionSupportedVersions(ClientHelloExtension):
     def __init__(self):
         self.size = 4
-        self.data = 0x0304 # tls1.3
+        self.data = 0x0304  # tls1.3
 
     def serialize(self) -> bytes:
         data = b"".join(
@@ -249,21 +263,24 @@ class ExtensionSupportedVersions(ClientHelloExtension):
 
     @classmethod
     def deserialize(klass, data):
-        _assigned_value, = struct.unpack(">h", data.read(2))
-        _data_follows, = struct.unpack(">h", data.read(2))
-        _assigned_version, = struct.unpack(">h", data.read(2))
+        (_assigned_value,) = struct.unpack(">h", data.read(2))
+        (_data_follows,) = struct.unpack(">h", data.read(2))
+        (_assigned_version,) = struct.unpack(">h", data.read(2))
         return ExtensionSupportedVersions()
-    
+
+
 class ExtensionServerPreSharedKey:
     def __init__(self, index) -> None:
         self.index = index
         self.size = 4
+
     @classmethod
     def deserialize(klass, data):
         _type = struct.unpack(">h", data.read(2))
         _len = struct.unpack(">h", data.read(2))
         _index = struct.unpack(">h", data.read(2))
         return ExtensionServerPreSharedKey(_index)
+
 
 EXTENSIONS_MAP = {
     EXTENSION_SERVER_NAME: ExtensionServerName,
@@ -272,7 +289,7 @@ EXTENSIONS_MAP = {
     EXTENSION_KEY_SHARE: ExtensionKeyShare,
     EXTENSION_PSK_KEY_EXCHANGE_MODES: ExtensionPSKKeyExchangeModes,
     EXTENSION_SUPPORTED_VERSIONS: ExtensionSupportedVersions,
-    EXTENSION_PRE_SHARED_KEY: ExtensionServerPreSharedKey
+    EXTENSION_PRE_SHARED_KEY: ExtensionServerPreSharedKey,
 }
 
 
@@ -282,12 +299,12 @@ class ClientHello:
         # 只有这个地方的legacy_protocol_version 为0x0301，为了兼容性
         # https://datatracker.ietf.org/doc/html/rfc8446#autoid-59
         self.record_header = RecordHeader(
-            rtype=ContentType.handshake, 
-            legacy_proto_version=TLS_VERSION_1_0, 
-            size=0
+            rtype=ContentType.handshake, legacy_proto_version=TLS_VERSION_1_0, size=0
         )
         # 0x01 client hello
-        self.handshake_header = HandshakeHeader(message_type=HandshakeType.client_hello, size=0)
+        self.handshake_header = HandshakeHeader(
+            message_type=HandshakeType.client_hello, size=0
+        )
         # 0303 tls1.2 为了兼容性
         self.client_version = TLS_VERSION_1_2
         self.client_random = secrets.token_bytes(32)
@@ -312,7 +329,7 @@ class ClientHello:
 
     def calc_record_size(self) -> int:
         data = self._serialize()
-        self.record_header.size = len(data) - 5 # 获取record中payload长度
+        self.record_header.size = len(data) - 5  # 获取record中payload长度
         self.handshake_header.size = self.record_header.size - 4
 
     # record type(1 byte)

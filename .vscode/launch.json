@@ -8,7 +8,7 @@
             "name": "Protection",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/server.py",
+            "program": "${workspaceFolder}/main.py",
             "args": [],
             "justMyCode": true
         }

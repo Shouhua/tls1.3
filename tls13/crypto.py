@@ -1,19 +1,21 @@
+import hashlib
+import struct
+from binascii import hexlify
+from dataclasses import dataclass
+
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes, hmac, serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey,
     X25519PublicKey,
 )
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization, hashes, hmac
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF, HKDFExpand
-from dataclasses import dataclass
-import hashlib
-import struct
-from binascii import hexlify
 
 
 def xor_iv(iv, num):
     formatted_num = (b"\x00" * 4) + struct.pack(">q", num)
     return bytes([i ^ j for i, j in zip(iv, formatted_num)])
+
 
 def calc_verify_data(secret, msg):
     finished_key = HKDF_Expand_Label(secret, "finished", b"", 32)
@@ -22,6 +24,7 @@ def calc_verify_data(secret, msg):
     hash.update(msg)
     h.update(hash.finalize())
     return h.finalize()
+
 
 def HKDF_Expand_Label(
     key, label, context, length, backend=default_backend(), algorithm=hashes.SHA256()
@@ -59,13 +62,18 @@ class ApplicationKeys:
             backend=default_backend(),
             key=self.master_secret,
             label="res master",
-            context=some_hash, # this needs to go up to client finished!!!!!!!
+            context=some_hash,  # ClientHello...client Finished this needs to go up to client finished!!!!!!!, 每次收到session ticket时候处理不就好了
             length=32,
         )
 
     def __str__(self):
-        return  "ApplicationKeys(" + \
-            ",".join(f"{key}={hexlify(value)}" for key, value in self.__dict__.items()) + ")"
+        return (
+            "ApplicationKeys("
+            + ",".join(
+                f"{key}={hexlify(value)}" for key, value in self.__dict__.items()
+            )
+            + ")"
+        )
 
 
 @dataclass
@@ -135,7 +143,7 @@ class KeyPair:
         return shared_key
 
     def derive_early_keys(self, psk: bytes, client_hello_hash: bytes) -> ResumptionKeys:
-        backend=default_backend()
+        backend = default_backend()
         early_secret = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -185,7 +193,12 @@ class KeyPair:
         )
 
     # 此时的hello_hash包括client_hello, server_hello
-    def derive(self, shared_secret: bytes, hello_hash: bytes, resumption_keys: ResumptionKeys=None):
+    def derive(
+        self,
+        shared_secret: bytes,
+        hello_hash: bytes,
+        resumption_keys: ResumptionKeys = None,
+    ):
         backend = default_backend()
         if resumption_keys:
             early_secret = resumption_keys.early_secret
@@ -197,7 +210,7 @@ class KeyPair:
                 salt=b"\x00",
                 backend=backend,
             )._extract(b"\x00" * 32)
-        
+
         empty_hash = hashlib.sha256(b"").digest()
         derived_secret = HKDF_Expand_Label(
             key=early_secret,
@@ -348,7 +361,7 @@ class KeyPair:
             server_iv=server_application_iv,
             master_secret=master_secret,
             client_application_traffic_secret=client_application_traffic_secret,
-            server_application_traffic_secret=server_application_traffic_secret
+            server_application_traffic_secret=server_application_traffic_secret,
         )
 
     @classmethod

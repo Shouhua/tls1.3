@@ -1,35 +1,50 @@
-from socket import socket, timeout
-from tls13.client_hello import ClientHello, ExtensionKeyShare, ExtensionPreSharedKey, ExtensionEarlyData, supported_signatures
-from tls13.server_hello import ServerHello, RecordHeader
-from tls13.handshake_headers import (
-    HandshakeHeader,
-    HANDSHAKE_HEADER_TYPES,
-    CertificateHandshakePayload,
-    HandshakeFinishedHandshakePayload,
-    CertificateVerifyHandshakePayload,
-    NewSessionTicketHandshakePayload,
-)
-from tls13.change_cipher_suite import ChangeCipherSuite
-from tls13.wrapper import Wrapper
 import hashlib
-from tls13.crypto import KeyPair, xor_iv, HandshakeKeys, calc_verify_data
-from binascii import hexlify
-from io import BytesIO, BufferedReader
-from tls13.crypto import HKDF_Expand_Label
 import hmac
-from typing import Tuple, Dict, Optional
+import ipaddress
+import os
+from binascii import hexlify
+from datetime import datetime
 from enum import IntEnum
+from io import BufferedReader, BytesIO
+from socket import socket, timeout
+from typing import Dict, Optional, Tuple
+
+import certifi
+import service_identity
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding, ec
+from cryptography.hazmat.primitives.asymmetric import ec, padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from datetime import datetime
-import ipaddress
-import service_identity
 from OpenSSL import crypto
-import certifi
-import os
+
+from tls13.change_cipher_suite import ChangeCipherSuite
+from tls13.client_hello import (
+    ClientHello,
+    ExtensionEarlyData,
+    ExtensionKeyShare,
+    ExtensionPreSharedKey,
+    supported_signatures,
+)
+from tls13.crypto import (
+    HandshakeKeys,
+    HKDF_Expand_Label,
+    KeyPair,
+    calc_verify_data,
+    xor_iv,
+)
+from tls13.handshake_headers import (
+    HANDSHAKE_HEADER_TYPES,
+    CertificateHandshakePayload,
+    CertificateVerifyHandshakePayload,
+    EncryptedExtensionHandshakePayload,
+    HandshakeFinishedHandshakePayload,
+    HandshakeHeader,
+    NewSessionTicketHandshakePayload,
+)
+from tls13.server_hello import RecordHeader, ServerHello
+from tls13.wrapper import Wrapper
+
 
 class SignatureAlgorithm(IntEnum):
     ECDSA_SECP256R1_SHA256 = 0x0403
@@ -55,6 +70,7 @@ class SignatureAlgorithm(IntEnum):
     SHA1_DSA = 0x0202
     ECDSA_SHA1 = 0x0203
 
+
 SIGNATURE_ALGORITHMS: Dict = {
     SignatureAlgorithm.ECDSA_SECP256R1_SHA256: (None, hashes.SHA256),
     SignatureAlgorithm.ECDSA_SECP384R1_SHA384: (None, hashes.SHA384),
@@ -67,6 +83,7 @@ SIGNATURE_ALGORITHMS: Dict = {
     SignatureAlgorithm.RSA_PSS_RSAE_SHA384: (padding.PSS, hashes.SHA384),
     SignatureAlgorithm.RSA_PSS_RSAE_SHA512: (padding.PSS, hashes.SHA512),
 }
+
 
 class TLS13Session:
     def __init__(self, host, port, timeout=2.0):
@@ -84,6 +101,7 @@ class TLS13Session:
         self.application_recv_counter = 0
         self.resumption_keys = None
         self.peer_cert: Optional[x509.Certificate] = None
+        self.early_data_accepted = False
 
         self.client_hello = b""
         self.server_hello = b""
@@ -91,7 +109,7 @@ class TLS13Session:
         self.certificate = b""
         self.certificate_verify = b""
         self.server_finished = b""
-    
+
     def connect(self) -> None:
         self.socket.connect((self.host, self.port))
 
@@ -118,10 +136,18 @@ class TLS13Session:
 
         # 写入keylogfile
         with open("keylogfile", "w") as f:
-            f.write(f"CLIENT_HANDSHAKE_TRAFFIC_SECRET {bytes.hex(self.client_random)} {bytes.hex(self.handshake_keys.client_handshake_traffic_secret)}\n")
-            f.write(f"SERVER_HANDSHAKE_TRAFFIC_SECRET {bytes.hex(self.client_random)} {bytes.hex(self.handshake_keys.server_handshake_traffic_secret)}\n")
-            f.write(f"CLIENT_TRAFFIC_SECRET_0 {bytes.hex(self.client_random)} {bytes.hex(self.application_keys.client_application_traffic_secret)}\n")
-            f.write(f"SERVER_TRAFFIC_SECRET_0 {bytes.hex(self.client_random)} {bytes.hex(self.application_keys.server_application_traffic_secret)}\n")
+            f.write(
+                f"CLIENT_HANDSHAKE_TRAFFIC_SECRET {bytes.hex(self.client_random)} {bytes.hex(self.handshake_keys.client_handshake_traffic_secret)}\n"
+            )
+            f.write(
+                f"SERVER_HANDSHAKE_TRAFFIC_SECRET {bytes.hex(self.client_random)} {bytes.hex(self.handshake_keys.server_handshake_traffic_secret)}\n"
+            )
+            f.write(
+                f"CLIENT_TRAFFIC_SECRET_0 {bytes.hex(self.client_random)} {bytes.hex(self.application_keys.client_application_traffic_secret)}\n"
+            )
+            f.write(
+                f"SERVER_TRAFFIC_SECRET_0 {bytes.hex(self.client_random)} {bytes.hex(self.application_keys.server_application_traffic_secret)}\n"
+            )
 
         # 兼容性考虑 Client change cipher suite
         self.socket.send(sccs.serialize())
@@ -129,7 +155,7 @@ class TLS13Session:
         # Client Handshake Finished
         self.send_handshake_finished(self.handshake_keys, handshake_hash)
 
-    def encrypt(self, key, iv, content, associated_data): 
+    def encrypt(self, key, iv, content, associated_data):
         algorithm = algorithms.AES(key)
         mode = modes.GCM(iv)
         encryptor = Cipher(algorithm, mode).encryptor()
@@ -144,43 +170,35 @@ class TLS13Session:
         decryptor.authenticate_additional_data(associated_data)
         return decryptor.update(ciphertext) + decryptor.finalize()
 
-    def resume(self) -> None:
+    def resume(self, msg) -> None:
         if self.application_keys is None:
             raise Exception("Can't Resume TLS1.3 Session")
 
         session_ticket = self.session_tickets[0]
-        
-        # print("keys", self.application_keys)
-        resumption_master_secret = self.application_keys.resumption_master_secret(hashlib.sha256(self.hello_hash_bytes).digest())
-        # print("resumption_master_secret", hexlify(resumption_master_secret))
-        self.resumption_keys = self.key_pair.derive_early_keys(session_ticket.psk(resumption_master_secret), b"")
-        # print("binder_key", hexlify(self.resumption_keys.binder_key))
 
-        # binder = AEAD_encrypt(key = binder_key, content = client_hello_without_binder)
-        # finished_key = HKDF_expand(key = binder_key, label="finished", hash=b"")
-        # binder_key = HKDF_expand(key = early_secret, "res binder", "")
-        # early_secret = HKDF_extract(key = psk, salt = 0)
-        # psk = HKDF_expand(key = resumption_master_secret, label = "resumption", hash = ticket_nonce)
-        # resumption_master_key = HKDF_expand(key=application_master_key, label="res master", hash=clientHello...clientFinished)
-        # 最终用来生成binder的key
-        finished_key = HKDF_Expand_Label(
-            key=self.resumption_keys.binder_key,
-            label="finished",
-            context=b"",
-            length=32,
+        resumption_master_secret = self.application_keys.resumption_master_secret(
+            hashlib.sha256(self.hello_hash_bytes).digest()
         )
-        verify_data = hmac.new(
-            finished_key, msg=b"", digestmod=hashlib.sha256
-        ).digest()
-        psk_binders = verify_data # 这个时候是空的，只是占位，后面填充，因为要计算binder的offset， 后面hash不带上binder, 但是长度还是要带上
-        # print("finished_key", hexlify(finished_key))
+        self.resumption_keys = self.key_pair.derive_early_keys(
+            session_ticket.psk(resumption_master_secret), b""
+        )
 
-        offset = len(ExtensionPreSharedKey.serialize_binders(psk_binders))
+        # 这两步步骤可以在每次收到session ticket时候做，可以放在session ticket对象中用于算binder key
+        # resumption_master_secret = HKDF_expand(key=application_master_secret, label="res master", hash=clientHello...clientFinished)
+        # resumption_secret = HKDF_expand(key = resumption_master_secret, label = "resumption", hash = ticket_nonce)
+
+        # early_secret = HKDF_extract(key = resumption_secret, salt = 0)
+        # binder_key = HKDF_expand(key = early_secret, "res binder", "")
+        # finished_key = HKDF_expand(key = binder_key, label="finished", hash=b"")
+        # binder = AEAD_encrypt(key = binder_key, content = client_hello_without_binder)
+
+        offset = hashes.SHA256.digest_size + 3  # 2字节binder key长度+1字节binder key[0]长度
 
         pre_share_key_ext = ExtensionPreSharedKey(
-            identity=session_ticket.session_ticket, 
-            obfuscated_ticket_age=session_ticket.obfuscated_ticket_age, 
-            binders=psk_binders)
+            identity=session_ticket.session_ticket,
+            obfuscated_ticket_age=session_ticket.obfuscated_ticket_age,
+            binders=bytes(hashes.SHA256.digest_size),
+        )
 
         self.key_pair = KeyPair.generate()
         self.handshake_keys = None
@@ -194,15 +212,11 @@ class TLS13Session:
         self.client_random = ch.client_random
         # ch.extensions = [ex for ex in ch.extensions if type(ex) is not ExtensionServerName]
         ch.add_extension(ExtensionEarlyData())
-        ch.add_extension(pre_share_key_ext) # 注意presharedkey extension位于最后
+        ch.add_extension(pre_share_key_ext)  # 注意presharedkey extension位于最后
 
         ch_bytes = ch.serialize()
         my_hello_hash = hashlib.sha256(ch_bytes[5:-offset]).digest()
-        # print("my_hash", hexlify(my_hello_hash))
-        # print("my_hash_offset", hexlify(ch_bytes[5:-offset]))
 
-
-        # TODO 这一段跟上面算占位代码重复了
         finished_key = HKDF_Expand_Label(
             key=self.resumption_keys.binder_key,
             label="finished",
@@ -215,76 +229,67 @@ class TLS13Session:
         ).digest()
         # print("finished_key", hexlify(finished_key))
         psk_binders = verify_data
-        
-        # print("psk_binders", hexlify(psk_binders))
-
-        
-        # client_hello hash
-        # final_hash = hashlib.sha256(ch_bytes[5:]).digest()
-        # print("early data client hello hash:", hexlify(final_hash))
-        # self.resumption_keys = self.key_pair.derive_early_keys(session_ticket.psk(resumption_master_secret), final_hash)
 
         pre_share_key_ext = ExtensionPreSharedKey(
-            identity=session_ticket.session_ticket, 
-            obfuscated_ticket_age=session_ticket.obfuscated_ticket_age, 
-            binders=psk_binders)
+            identity=session_ticket.session_ticket,
+            obfuscated_ticket_age=session_ticket.obfuscated_ticket_age,
+            binders=psk_binders,
+        )
 
         # TODO: 这里删除之前PreSharedKey extension, 添加新的, 能不能更新原有的
-        ch.extensions = [ex for ex in ch.extensions if type(ex) is not ExtensionPreSharedKey]
+        ch.extensions = [
+            ex for ex in ch.extensions if type(ex) is not ExtensionPreSharedKey
+        ]
         # ch.extensions = [ex for ex in ch.extensions if type(ex) is not ExtensionServerName]
         ch.add_extension(pre_share_key_ext)
 
         ch_bytes_final = ch.serialize()
-        # print(len(ch_bytes_final), ch_bytes_final)
 
         final_hash = hashlib.sha256(ch_bytes_final[5:]).digest()
-        # print("final_hash", hexlify(final_hash))
-        self.resumption_keys = self.key_pair.derive_early_keys(session_ticket.psk(resumption_master_secret), final_hash)
+        self.resumption_keys = self.key_pair.derive_early_keys(
+            session_ticket.psk(resumption_master_secret), final_hash
+        )
 
         # 新的hash开始
         self.hello_hash_bytes = ch_bytes_final[5:]
 
         with open("keylogfile", "a") as f:
-            f.write(f"CLIENT_EARLY_TRAFFIC_SECRET {ch.client_random.hex()} {self.resumption_keys.client_early_traffic_secret.hex()}\n")
+            f.write(
+                f"CLIENT_EARLY_TRAFFIC_SECRET {ch.client_random.hex()} {self.resumption_keys.client_early_traffic_secret.hex()}\n"
+            )
 
         self.socket = socket()
         self.socket.connect((self.host, self.port))
 
-        # data = f"HEAD /img.jpg HTTP/1.1\r\nHost: {self.host.decode()}\r\nUser-Agent: curl/7.54.0\r\nAccept: */*\r\n\r\n".encode()
-        # data = f"GET / HTTP/1.1\r\nHost: {self.host.decode()}\r\nUser-Agent: curl/7.54.0\r\nAccept: */*\r\n\r\n".encode()
-        data = b"hello world again"
-        send_data = data + b"\x17"
+        send_data = msg + b"\x17"
         record_header = RecordHeader(rtype=0x17, size=len(send_data) + 16)
 
-        # encryptor = AES.new(
-        #     self.resumption_keys.client_early_key,
-        #     AES.MODE_GCM,
-        #     xor_iv(self.resumption_keys.client_early_iv, 0),
-        # )
-        # ciphertext_payload = encryptor.encrypt(send_data) + encryptor.finalize()
-        # tag = encryptor.tag
         ciphertext_payload, tag = self.encrypt(
-            self.resumption_keys.client_early_key, 
+            self.resumption_keys.client_early_key,
             xor_iv(self.resumption_keys.client_early_iv, 0),
             send_data,
-            record_header.serialize()
+            record_header.serialize(),
         )
 
         w = Wrapper(record_header=record_header, payload=ciphertext_payload + tag)
         # client hello, change cipher spec(140303000101), application data 一起发送
         self.socket.send(ch_bytes_final + bytes.fromhex("140303000101") + w.serialize())
-        
+
         bytes_buffer = BufferedReader(BytesIO(self.socket.recv(4096)))
         # print("res", bytes_buffer)
-        
+
         # NOTICE: 里面已经添加server hello到hello_hash_bytes
         sh = self.recv_server_hello(bytes_buffer)
         key_share_ex = [ex for ex in sh.extensions if type(ex) is ExtensionKeyShare][0]
         # print(f"server key share -> public key bytes: {key_share_ex.public_key_bytes.hex()}")
         self.handshake_keys = self.calc_handshake_keys(key_share_ex.public_key_bytes)
         with open("keylogfile", "a") as f:
-            f.write(f"CLIENT_HANDSHAKE_TRAFFIC_SECRET {bytes.hex(self.client_random)} {bytes.hex(self.handshake_keys.client_handshake_traffic_secret)}\n")
-            f.write(f"SERVER_HANDSHAKE_TRAFFIC_SECRET {bytes.hex(self.client_random)} {bytes.hex(self.handshake_keys.server_handshake_traffic_secret)}\n")
+            f.write(
+                f"CLIENT_HANDSHAKE_TRAFFIC_SECRET {bytes.hex(self.client_random)} {bytes.hex(self.handshake_keys.client_handshake_traffic_secret)}\n"
+            )
+            f.write(
+                f"SERVER_HANDSHAKE_TRAFFIC_SECRET {bytes.hex(self.client_random)} {bytes.hex(self.handshake_keys.server_handshake_traffic_secret)}\n"
+            )
 
         # Recv ServerChangeCipherSuite
         sccs = ChangeCipherSuite.deserialize(bytes_buffer)
@@ -305,13 +310,15 @@ class TLS13Session:
             self.resumption_keys.client_early_key,
             xor_iv(self.resumption_keys.client_early_iv, 1),
             send_data,
-            record_header.serialize()
+            record_header.serialize(),
         )
 
         w = Wrapper(record_header=record_header, payload=ciphertext_payload + tag)
 
         handshake_hash = hashlib.sha256(self.hello_hash_bytes).digest()
-        finished_data = self.send_handshake_finished(self.handshake_keys, handshake_hash, True)
+        finished_data = self.send_handshake_finished(
+            self.handshake_keys, handshake_hash, True
+        )
         self.socket.send(w.serialize() + finished_data)
 
         # Calculate Application Keys
@@ -319,39 +326,54 @@ class TLS13Session:
             self.handshake_keys.handshake_secret, handshake_hash
         )
         with open("keylogfile", "a") as f:
-            f.write(f"CLIENT_TRAFFIC_SECRET_0 {bytes.hex(self.client_random)} {bytes.hex(self.application_keys.client_application_traffic_secret)}\n")
-            f.write(f"SERVER_TRAFFIC_SECRET_0 {bytes.hex(self.client_random)} {bytes.hex(self.application_keys.server_application_traffic_secret)}\n")
+            f.write(
+                f"CLIENT_TRAFFIC_SECRET_0 {bytes.hex(self.client_random)} {bytes.hex(self.application_keys.client_application_traffic_secret)}\n"
+            )
+            f.write(
+                f"SERVER_TRAFFIC_SECRET_0 {bytes.hex(self.client_random)} {bytes.hex(self.application_keys.server_application_traffic_secret)}\n"
+            )
 
         # 接收server application data, 也有可能alter数据
-        while raw_data := self.socket.recv(4096):
-            # print(f"received {len(raw_data)} bytes data: {raw_data.hex()}")
-            while len(raw_data) > 5:
-                if raw_data[0] == 0x17: # application data
-                    assert raw_data[1:3] == b"\x03\x03" # check version tls1.2 
-                    record_len = int.from_bytes(raw_data[3:5], byteorder="big")
-                    application_data = raw_data[5:record_len+5]
-                    # print(f"application raw data: {application_data.hex()}")
+        # 这里主要是检验0-RTT，注意使用pre shared key跟early data是两码事，python官方的ssl不支持early data
+        # 所以如果使用server.py返回的不一定是业务数据，需要检验EncryptedExtension里面是否存在early data extension(表示server已经接受了early data)
+        print()
+        print(f"服务端是否接受处理early data: {self.early_data_accepted}")
+        raw_data = self.socket.recv(4096)
+        while len(raw_data) > 5:
+            if raw_data[0] == 0x17:  # application data
+                assert raw_data[1:3] == b"\x03\x03"  # check version tls1.2
+                record_len = int.from_bytes(raw_data[3:5], byteorder="big")
+                application_data = raw_data[5 : record_len + 5]
+                # print(f"application raw data: {application_data.hex()}")
 
-                    # NOTICE: handshake加解密的associated data是相对应的record header data
-                    plaintext = self.decrypt(
-                        self.application_keys.server_key,
-                        xor_iv(self.application_keys.server_iv, self.application_recv_counter),
-                        application_data[0: -16],
-                        raw_data[0:5],
-                        application_data[-16:]
+                # NOTICE: handshake加解密的associated data是相对应的record header data
+                plaintext = self.decrypt(
+                    self.application_keys.server_key,
+                    xor_iv(
+                        self.application_keys.server_iv,
+                        self.application_recv_counter,
+                    ),
+                    application_data[0:-16],
+                    raw_data[0:5],
+                    application_data[-16:],
+                )
+                self.application_recv_counter += 1
+                if plaintext[-1] == 0x17:  # 如果是真正的application data，打印decode后的asscii
+                    print(f"应用数据: ################################################")
+                    print(f"{plaintext[0: -1].decode()}")
+                    print("#####################################")
+                elif plaintext[-1] == 0x15:  # alert
+                    print(
+                        f"Alert数据: alert level {plaintext[0:1].hex()}, alert desc {plaintext[1:2].hex()}"
                     )
-                    self.application_recv_counter += 1
-                    if plaintext[-1] == 0x17: # 如果是真正的application data，打印decode后的asscii
-                        print(f'应用数据: ################################################################################################')
-                        print(f'{plaintext[0: -1].decode()}')
-                        print('###########################################################################################################')
-                    elif plaintext[-1] == 0x15: # alert
-                        print(f"Alert数据: alert level {plaintext[0:1].hex()}, alert desc {plaintext[1:2].hex()}")
-                    else:
-                        print(f"未知类型数据: 类型 {plaintext[-1:].hex()} raw data: {plaintext[0: -1].hex()}")
-                    raw_data = raw_data[record_len+5:]
                 else:
-                    break;
+                    print(
+                        f"未知类型数据: 类型 0x{plaintext[-1:].hex()} raw data: {plaintext[0: -1].hex()}"
+                    )
+                    break
+                raw_data = raw_data[record_len + 5 :]
+            else:
+                break
 
     def send_client_hello(self):
         ch = ClientHello(self.host, self.key_pair.public)
@@ -364,6 +386,7 @@ class TLS13Session:
     def recv_server_hello(self, bytes_buffer) -> ServerHello:
         original_buffer = bytes_buffer.peek()
         sh = ServerHello.deserialize(bytes_buffer)
+        self.early_data_accepted = sh.early_data
         self.hello_hash_bytes += original_buffer[5 : sh.record_header.size + 5]
         self.server_hello = original_buffer[5 : sh.record_header.size + 5]
         return sh
@@ -392,7 +415,7 @@ class TLS13Session:
             xor_iv(self.handshake_keys.server_iv, self.handshake_recv_counter),
             bytes(ciphertext),
             recdata,
-            authtag
+            authtag,
         )
         self.handshake_recv_counter += 1
 
@@ -400,7 +423,8 @@ class TLS13Session:
         return plaintext[:-1]
 
     def parse_encrypted_extensions(self, plaintext):
-        # TODO self.encrypted_extensions = ...
+        ee = EncryptedExtensionHandshakePayload.deserialize(plaintext[4:])
+        self.early_data_accepted = ee.early_data
         self.hello_hash_bytes += plaintext
         self.encrypted_extension = plaintext
 
@@ -408,16 +432,17 @@ class TLS13Session:
         plaintext_buffer = BufferedReader(BytesIO(plaintext))
         hh = HandshakeHeader.deserialize(plaintext_buffer.read(4))
         hh_payload_buffer = plaintext_buffer.read(hh.size)
-        hh_payload = CertificateHandshakePayload.deserialize(
-            hh_payload_buffer
-        )
-        self.peer_cert = x509.load_der_x509_certificate(hh_payload.certificate) 
+        hh_payload = CertificateHandshakePayload.deserialize(hh_payload_buffer)
+        self.peer_cert = x509.load_der_x509_certificate(hh_payload.certificate)
 
         self.hello_hash_bytes += plaintext
         self.certificate = plaintext
-    
+
     def signature_algorithm_params(self, signature_algorithm: int) -> Tuple:
-        if signature_algorithm in (SignatureAlgorithm.ED25519, SignatureAlgorithm.ED448):
+        if signature_algorithm in (
+            SignatureAlgorithm.ED25519,
+            SignatureAlgorithm.ED448,
+        ):
             return tuple()
 
         padding_cls, algorithm_cls = SIGNATURE_ALGORITHMS[signature_algorithm]
@@ -432,7 +457,9 @@ class TLS13Session:
             padding_obj = padding_cls()
         return padding_obj, algorithm
 
-    def verify_certificate(self, certificate: x509.Certificate, cafile, server_name: Optional[str] = None):
+    def verify_certificate(
+        self, certificate: x509.Certificate, cafile, server_name: Optional[str] = None
+    ):
         # 1. 检查时间
         now = datetime.utcnow()
         if now < certificate.not_valid_before:
@@ -472,14 +499,14 @@ class TLS13Session:
                         f"either of {patterns_repr}"
                     )
                 print(f"证书校验失败，各种subject对不上 {errmsg}")
-        
+
         # 3. 加载根证书，验证是否是真货
         store = crypto.X509Store()
         store.load_locations(certifi.where())
         store.load_locations(cafile)
         store_ctx = crypto.X509StoreContext(
-            store, 
-            crypto.X509.from_cryptography(certificate))
+            store, crypto.X509.from_cryptography(certificate)
+        )
         try:
             store_ctx.verify_certificate()
         except crypto.X509StoreContextError:
@@ -489,33 +516,33 @@ class TLS13Session:
         plaintext_buffer = BufferedReader(BytesIO(plaintext))
         hh = HandshakeHeader.deserialize(plaintext_buffer.read(4))
         hh_payload_buffer = plaintext_buffer.read(hh.size)
-        hh_payload = CertificateVerifyHandshakePayload.deserialize(
-            hh_payload_buffer
-        )
-        if hh_payload.signature_algorithm not in supported_signatures: # 此处进行handshake header中的signature_algorithm比较
+        hh_payload = CertificateVerifyHandshakePayload.deserialize(hh_payload_buffer)
+        if (
+            hh_payload.signature_algorithm not in supported_signatures
+        ):  # 此处进行handshake header中的signature_algorithm比较
             print(f"NOT SUPPORT SIGNATURE ALGORITHM {self.signature_algorithm}")
-                
+
         # https://datatracker.ietf.org/doc/html/rfc8446#autoid-51
         context_string = b"TLS 1.3, server CertificateVerify"
         hash = hashes.Hash(hashes.SHA256())
         hash.update(self.hello_hash_bytes)
         verify_data = b" " * 64 + context_string + b"\x00" + hash.finalize()
-        
+
         # 检验certificate verify
         try:
             self.peer_cert.public_key().verify(
                 hh_payload.signature,
                 verify_data,
-                *self.signature_algorithm_params(hh_payload.signature_algorithm)
+                *self.signature_algorithm_params(hh_payload.signature_algorithm),
             )
         except InvalidSignature:
             print(f"CertificateVerify失败")
 
         # 检验certificate
         self.verify_certificate(
-            self.peer_cert, 
-            os.path.abspath("./test_server/nginx/certs/cert.pem"), 
-            "localhost"
+            self.peer_cert,
+            os.path.abspath("./test_server/nginx/certs/cert.pem"),
+            "localhost",
         )
 
         self.hello_hash_bytes += plaintext
@@ -530,26 +557,26 @@ class TLS13Session:
         )
         # NOTICE 这里的msg是经过hash后的
         verify_data = hmac.new(
-            key = finished_key, 
-            msg = hashlib.sha256(self.hello_hash_bytes).digest(), 
-            digestmod = hashlib.sha256
+            key=finished_key,
+            msg=hashlib.sha256(self.hello_hash_bytes).digest(),
+            digestmod=hashlib.sha256,
         ).digest()
 
-        print(hexlify(self.handshake_keys.server_handshake_traffic_secret))
-        print(hexlify(calc_verify_data(self.handshake_keys.server_handshake_traffic_secret, self.hello_hash_bytes)))
-        print(hexlify(verify_data))
-        print(hexlify(plaintext[4:]))
-        
+        # print(hexlify(calc_verify_data(self.handshake_keys.server_handshake_traffic_secret, self.hello_hash_bytes)))
+
+        if verify_data != plaintext[4:]:
+            print(f"校验server FINISHED失败")
+
         self.hello_hash_bytes += plaintext
         self.server_finished = plaintext
 
     # 解析server的encrypted_extension, certificate(*), certificate_verify(*), finished
     # resume情况下没有certificate, certificate_verifiy
-    def parse_enc_cert_verify_finished(self, bytes_buffer, is_resume = False) -> bytes:
+    def parse_enc_cert_verify_finished(self, bytes_buffer, is_resume=False) -> bytes:
         parse_funcs = [self.parse_encrypted_extensions]
         if is_resume is False:
-           parse_funcs.append(self.parse_certificate)
-           parse_funcs.append(self.parse_certificate_verify)
+            parse_funcs.append(self.parse_certificate)
+            parse_funcs.append(self.parse_certificate_verify)
         parse_funcs.append(self.parse_finished)
         for parse_func in parse_funcs:
             # plaintext 包含handshake header(4 bytes)
@@ -557,7 +584,7 @@ class TLS13Session:
             parse_func(plaintext)
 
     def send_handshake_finished(
-        self, handshake_keys: HandshakeKeys, handshake_hash: bytes, not_send = False
+        self, handshake_keys: HandshakeKeys, handshake_hash: bytes, not_send=False
     ):
         hh_payload = HandshakeFinishedHandshakePayload.generate(
             handshake_keys.client_handshake_traffic_secret, handshake_hash
@@ -586,7 +613,7 @@ class TLS13Session:
             handshake_keys.client_key,
             handshake_keys.client_iv,
             plaintext_payload,
-            record_header.serialize()
+            record_header.serialize(),
         )
 
         # 可以在wireshark中查看
@@ -600,14 +627,18 @@ class TLS13Session:
             self.socket.send(w.serialize())
 
     def send(self, data: bytes):
-        send_data = data + b"\x17" # 要发送的payload, 0x17表示真正的content type(application data)
-        record_header = RecordHeader(rtype=0x17, size=len(send_data) + 16) # 加上的16表示AEAD auth tag
+        send_data = (
+            data + b"\x17"
+        )  # 要发送的payload, 0x17表示真正的content type(application data)
+        record_header = RecordHeader(
+            rtype=0x17, size=len(send_data) + 16
+        )  # 加上的16表示AEAD auth tag
 
         ciphertext_payload, tag = self.encrypt(
             self.application_keys.client_key,
             xor_iv(self.application_keys.client_iv, self.application_send_counter),
             send_data,
-            record_header.serialize()
+            record_header.serialize(),
         )
 
         w = Wrapper(record_header=record_header, payload=ciphertext_payload + tag)
@@ -631,7 +662,7 @@ class TLS13Session:
             xor_iv(self.application_keys.server_iv, self.application_recv_counter),
             bytes(ciphertext),
             recdata,
-            authtag
+            authtag,
         )
         self.application_recv_counter += 1
 
@@ -648,9 +679,9 @@ class TLS13Session:
         # while res[-1] != 0x17:
         # count =1
         while True:
-            if res[-1] == 0x17: # 23 application data
+            if res[-1] == 0x17:  # 23 application data
                 yield res[:-1]
-            if res[-1] == 0x16: # 22 handshak data
+            if res[-1] == 0x16:  # 22 handshak data
                 plaintext_buffer = BufferedReader(BytesIO(res[:-1]))
                 while plaintext_buffer.peek():
                     hh = HandshakeHeader.deserialize(plaintext_buffer.read(4))

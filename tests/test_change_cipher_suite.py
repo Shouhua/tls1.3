@@ -1,4 +1,5 @@
-from io import BytesIO, BufferedReader
+from io import BufferedReader, BytesIO
+
 from tls13.change_cipher_suite import ChangeCipherSuite
 
 CHANGE_CIPHER_SUITE_PACKET = bytes.fromhex("140303000101")

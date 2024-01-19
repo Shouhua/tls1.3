@@ -1,10 +1,10 @@
 from io import BytesIO
+
 from tls13.handshake_headers import (
-    HandshakeHeader,
-    HandshakePayload,
     HANDSHAKE_HEADER_TYPES,
     HandshakeFinishedHandshakePayload,
-    NewSessionTicketHandshakePayload,
+    HandshakeHeader,
+    HandshakePayload,
 )
 
 

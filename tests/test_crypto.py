@@ -1,10 +1,13 @@
+import unittest
+from unittest import mock
+
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey,
     X25519PublicKey,
 )
-from unittest import mock
+
 from tls13.crypto import KeyPair
-import unittest
+
 
 class TestCrypto(unittest.TestCase):
     def get_mocked_keypair(self) -> KeyPair:
@@ -21,7 +24,6 @@ class TestCrypto(unittest.TestCase):
         ):
             return KeyPair.generate()
 
-
     def test_KeyExchange(self):
         key_pair = self.get_mocked_keypair()
         peer_pub_key_bytes = bytes.fromhex(
@@ -30,7 +32,6 @@ class TestCrypto(unittest.TestCase):
         assert key_pair.exchange(peer_pub_key_bytes) == bytes.fromhex(
             "df4a291baa1eb7cfa6934b29b474baad2697e29f1f920dcc77c8a0a088447624"
         )
-
 
     def test_KeyPair_derive(self):
         key_pair = self.get_mocked_keypair()
@@ -55,7 +56,6 @@ class TestCrypto(unittest.TestCase):
         assert keys.handshake_secret == bytes.fromhex(
             "fb9fc80689b3a5d02c33243bf69a1b1b20705588a794304a6e7120155edf149a"
         )
-
 
     def test_KeyPair_derive_application_keys(self):
         handshake_secret = bytes.fromhex(

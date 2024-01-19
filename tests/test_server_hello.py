@@ -1,11 +1,13 @@
-from tls13.server_hello import RecordHeader, ServerHello
-from tls13.handshake_headers import HandshakeHeader
+from io import BufferedReader, BytesIO
+from unittest import mock
+
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey,
     X25519PublicKey,
 )
-from unittest import mock
-from io import BufferedReader, BytesIO
+
+from tls13.handshake_headers import HandshakeHeader
+from tls13.server_hello import RecordHeader, ServerHello
 
 
 def test_RecordHeader():
